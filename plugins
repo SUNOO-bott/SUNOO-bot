@@ -1,0 +1,95 @@
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys')
+const qrcode = require('qrcode-terminal')
+const pino = require('pino')
+
+const prefix = '.'
+const owner = '6283821428149'
+const ownerName = 'Reina!! gf sunoo' //
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('session')
+
+    const sock = makeWASocket({
+        auth: state,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: true
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update
+        if(qr) {
+            console.log('SCAN QR DI BAWAH:')
+            qrcode.generate(qr, {small: true})
+        }
+        if(connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode!== DisconnectReason.loggedOut
+            if(shouldReconnect) startBot()
+        }
+        if(connection === 'open') console.log('✅ BOT SUNOO ONLINE')
+    })
+
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const m = messages[0]
+        if(!m.message || m.key.fromMe) return
+
+        const from = m.key.remoteJid
+        const body = m.message.conversation || m.message.extendedTextMessage?.text || ''
+        const pushname = m.pushName || 'User'
+
+        if(!body.startsWith(prefix)) return
+        const args = body.slice(prefix.length).trim().split(/ +/)
+        const command = args.shift().toLowerCase()
+
+        // MENU
+        if(command === 'menu') {
+            await sock.sendMessage(from, { text: `Halo ${pushname} 👋
+
+*MENU SUNOO BOT*
+${prefix}menu - Menu ini
+${prefix}ping - Cek speed bot
+${prefix}sticker - Bikin stiker dari gambar
+${prefix}owner - Kontak owner
+
+Dibuat sama ${ownerName} 🐧` })
+        }
+
+        // PING
+        if(command === 'ping') {
+            const start = Date.now()
+            const msg = await sock.sendMessage(from, { text: 'PING...' })
+            await sock.sendMessage(from, { text: `PONG: ${Date.now() - start}ms` }, { quoted: msg })
+        }
+
+        // STICKER
+        if(command === 'sticker' || command === 's') {
+            const quoted = m.message.extendedTextMessage?.contextInfo?.quotedMessage
+            if(quoted?.imageMessage || m.message.imageMessage) {
+                await sock.sendMessage(from, { text: 'Bentar...' })
+                const media = await sock.downloadMediaMessage(m)
+                await sock.sendMessage(from, { sticker: media })
+            } else {
+                await sock.sendMessage(from, { text: 'Reply gambarnya dulu' })
+            }
+        }
+
+        // OWNER - VERSI KONTAK FORWARD KEK SS LU
+        if(command === 'owner') {
+            const vcard = `BEGIN:VCARD\nVERSION:3.0\nN:${ownerName}\nFN:${ownerName}\nTEL;type=CELL;type=VOICE;waid=${owner}:+${owner}\nEND:VCARD`
+
+            await sock.sendMessage(from, {
+                contacts: {
+                    displayName: ownerName,
+                    contacts: [{ vcard }]
+                },
+                contextInfo: {
+                    forwardingScore: 999,
+                    isForwarded: true
+                }
+            })
+        }
+    })
+}
+
+startBot()
