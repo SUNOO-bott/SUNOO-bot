@@ -1,0 +1,78 @@
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys')
+const qrcode = require('qrcode-terminal')
+const pino = require('pino')
+const fs = require('fs')
+
+// Panggil menu.js
+const menu = require('./menu.js')
+
+const prefix = '.'
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
+
+    const sock = makeWASocket({
+        auth: state,
+        logger: pino({ level: 'silent' }),
+        browser: Browsers.macOS('Chrome'),
+        printQRInTerminal: true,
+    })
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update
+        if(qr) {
+            console.log('SCAN QR DI BAWAH INI BRO:')
+            qrcode.generate(qr, {small: true})
+        }
+        if(connection === 'open') {
+            console.log('✅ BOT CONNECTED! SUNOO BOT ONLINE!')
+        }
+        if(connection === 'close') {
+            const reason = lastDisconnect?.error?.output?.statusCode
+            if(reason!== DisconnectReason.loggedOut) {
+                startBot()
+            }
+        }
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    // Handler pesan
+    sock.ev.on('messages.upsert', async (m) => {
+        try {
+            const msg = m.messages[0]
+            if(!msg.message || msg.key.fromMe) return
+
+            const from = msg.key.remoteJid
+            const body = msg.message.conversation || msg.message.extendedTextMessage?.text || ''
+            const pushname = msg.pushName || 'User'
+            const sender = msg.key.participant || from
+            const tag = sender.split('@')[0]
+
+            if(!body.startsWith(prefix)) return
+
+            const args = body.slice(prefix.length).trim().split(/ +/)
+            const command = args.shift().toLowerCase()
+
+            // Command.menu
+            if(command === 'menu') {
+                const dataMenu = menu(prefix, pushname, tag, 'Aktif', '10', '5000')
+
+                await sock.sendMessage(from, {
+                    image: { url: dataMenu.fotoMenu },
+                    caption: dataMenu.header + '\n\n' + dataMenu.menu + '\n\n' + dataMenu.footer,
+                    mentions: [sender]
+                })
+            }
+
+            // Command.ping
+            if(command === 'ping') {
+                await sock.sendMessage(from, { text: 'Pong! Bot aktif bro 🔥' })
+            }
+
+        } catch(e) {
+            console.log(e)
+        }
+    })
+}
+startBot()
